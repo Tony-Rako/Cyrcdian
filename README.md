@@ -145,18 +145,6 @@ We welcome contributions that help improve sleep health and circadian rhythm opt
 - Update documentation if needed
 - Focus on user experience and health benefits
 
-## 📋 Roadmap
-
-- [ ] Advanced sleep analytics and insights
-- [ ] Integration with wearable devices
-- [ ] Personalized circadian rhythm coaching
-- [ ] Social features for sleep challenges
-- [ ] Light exposure tracking and recommendations
-- [ ] Meal timing optimization
-
-## 📄 License
-
-This project is licensed under the MIT License - see the [LICENSE](LICENSE) file for details.
 
 ## 🌙 About Circadian Health
 
