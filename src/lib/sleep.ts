@@ -1,10 +1,29 @@
-import { addMinutes, format, parse, subMinutes } from 'date-fns'
+import { addMinutes, addHours, format, parse, subMinutes } from 'date-fns'
 
 export interface SleepCycle {
   bedtime: Date
   duration: number // in hours
   cycles: number
   quality: 'short' | 'optimal' | 'extended'
+}
+
+export interface SleepOption {
+  bedtimeAlarm: Date
+  actualSleepTime: Date
+  calculatedWakeTime: Date
+  actualSleepDuration: number // in hours
+  cycles: number
+  awakeHours: number
+  quality: 'custom' | 'short' | 'recommended' | 'extended'
+  matchScore: number // 0-100, how well it matches target wake time
+}
+
+export interface EnhancedSleepCalculation {
+  currentWakeTime: Date
+  targetWakeTime: Date
+  sleepOptions: SleepOption[]
+  bestMatch: SleepOption | null
+  customAwakeDuration?: number | undefined
 }
 
 export interface SleepCalculation {
@@ -17,7 +36,7 @@ export interface SleepCalculation {
 
 // 90-minute sleep cycle in minutes
 const SLEEP_CYCLE_MINUTES = 90
-const FALL_ASLEEP_MINUTES = 15 // Average time to fall asleep
+const FALL_ASLEEP_MINUTES = 30 // 30-minute sleep onset buffer
 
 /**
  * Calculate optimal bedtimes based on desired wake time
@@ -153,4 +172,155 @@ export function isInSleepWindow(bedtime: Date, wakeTime: Date): boolean {
   }
 
   return now >= bedtime && now <= wakeTime
+}
+
+/**
+ * Calculate enhanced sleep schedule based on current wake time and target wake time
+ */
+export function calculateEnhancedSleepSchedule(
+  currentWakeTime: Date,
+  targetWakeTime: Date,
+  customAwakeDuration?: number
+): EnhancedSleepCalculation {
+  const sleepOptions: SleepOption[] = []
+
+  // Standard awake duration options (in hours)
+  const standardOptions: Array<{
+    hours: number
+    quality: SleepOption['quality']
+  }> = [
+    { hours: 14.5, quality: 'short' },
+    { hours: 16, quality: 'recommended' },
+    { hours: 18, quality: 'extended' },
+  ]
+
+  // Add custom option if provided and valid
+  if (
+    customAwakeDuration &&
+    customAwakeDuration >= 11.5 &&
+    customAwakeDuration < 14.5
+  ) {
+    standardOptions.unshift({ hours: customAwakeDuration, quality: 'custom' })
+  }
+
+  for (const option of standardOptions) {
+    const sleepOption = calculateSleepOptionFromAwakeDuration(
+      currentWakeTime,
+      targetWakeTime,
+      option.hours,
+      option.quality
+    )
+    if (sleepOption) {
+      sleepOptions.push(sleepOption)
+    }
+  }
+
+  // Find best match based on how close calculated wake time is to target
+  const bestMatch = sleepOptions.reduce(
+    (best, current) => {
+      if (!best) return current
+      return current.matchScore > best.matchScore ? current : best
+    },
+    null as SleepOption | null
+  )
+
+  return {
+    currentWakeTime,
+    targetWakeTime,
+    sleepOptions,
+    bestMatch,
+    customAwakeDuration,
+  }
+}
+
+/**
+ * Calculate a single sleep option based on awake duration
+ */
+function calculateSleepOptionFromAwakeDuration(
+  currentWakeTime: Date,
+  targetWakeTime: Date,
+  awakeHours: number,
+  quality: SleepOption['quality']
+): SleepOption | null {
+  // Calculate bedtime alarm time (awake hours after current wake time)
+  const bedtimeAlarm = addHours(currentWakeTime, awakeHours)
+
+  // Actual sleep time is 30 minutes after bedtime alarm
+  const actualSleepTime = addMinutes(bedtimeAlarm, FALL_ASLEEP_MINUTES)
+
+  // Calculate possible wake times based on complete sleep cycles
+  const possibleWakeTimes: Array<{
+    wakeTime: Date
+    cycles: number
+    duration: number
+  }> = []
+
+  // Try 3-6 complete sleep cycles
+  for (let cycles = 3; cycles <= 6; cycles++) {
+    const sleepDurationMinutes = cycles * SLEEP_CYCLE_MINUTES
+    const calculatedWakeTime = addMinutes(actualSleepTime, sleepDurationMinutes)
+    const sleepDurationHours = sleepDurationMinutes / 60
+
+    possibleWakeTimes.push({
+      wakeTime: calculatedWakeTime,
+      cycles,
+      duration: sleepDurationHours,
+    })
+  }
+
+  // Find the wake time closest to target
+  const bestWakeTime = possibleWakeTimes.reduce((best, current) => {
+    const currentDiff = Math.abs(
+      current.wakeTime.getTime() - targetWakeTime.getTime()
+    )
+    const bestDiff = Math.abs(
+      best.wakeTime.getTime() - targetWakeTime.getTime()
+    )
+    return currentDiff < bestDiff ? current : best
+  })
+
+  // Calculate match score (0-100) based on how close to target wake time
+  const timeDiffMinutes =
+    Math.abs(bestWakeTime.wakeTime.getTime() - targetWakeTime.getTime()) /
+    (1000 * 60)
+  const maxAcceptableDiff = 60 // 1 hour
+  const matchScore = Math.max(
+    0,
+    100 - (timeDiffMinutes / maxAcceptableDiff) * 100
+  )
+
+  return {
+    bedtimeAlarm,
+    actualSleepTime,
+    calculatedWakeTime: bestWakeTime.wakeTime,
+    actualSleepDuration: bestWakeTime.duration,
+    cycles: bestWakeTime.cycles,
+    awakeHours,
+    quality,
+    matchScore: Math.round(matchScore),
+  }
+}
+
+/**
+ * Format awake duration for display
+ */
+export function formatAwakeDuration(hours: number): string {
+  const h = Math.floor(hours)
+  const m = Math.round((hours - h) * 60)
+  if (m === 0) return `${h}h`
+  return `${h}h ${m}m`
+}
+
+/**
+ * Calculate time difference in a readable format
+ */
+export function getTimeDifference(time1: Date, time2: Date): string {
+  const diffMs = Math.abs(time2.getTime() - time1.getTime())
+  const diffMinutes = Math.floor(diffMs / (1000 * 60))
+  const hours = Math.floor(diffMinutes / 60)
+  const minutes = diffMinutes % 60
+
+  if (hours === 0) return `${minutes}m`
+  if (minutes === 0) return `${hours}h`
+  return `${hours}h ${minutes}m`
 }

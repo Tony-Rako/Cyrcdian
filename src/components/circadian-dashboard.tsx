@@ -2,7 +2,7 @@
 
 import { useEffect, useState } from 'react'
 import { motion } from 'framer-motion'
-import { Sun, Moon, Clock, Timer, Bell } from 'lucide-react'
+import { Sun, Moon, Clock, Timer, Bell, Copy, Calendar } from 'lucide-react'
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
 import { Button } from '@/components/ui/button'
 import {
@@ -13,10 +13,13 @@ import {
   type LocationCoords,
 } from '@/lib/circadian'
 import {
-  calculateOptimalBedtimes,
+  calculateEnhancedSleepSchedule,
   getTimeRemaining,
   formatSleepTime,
+  formatAwakeDuration,
+  getTimeDifference,
   parseWakeTime,
+  type EnhancedSleepCalculation,
 } from '@/lib/sleep'
 import { wakeDetectionService } from '@/lib/wake-detection'
 import { notificationService } from '@/lib/notifications'
@@ -26,7 +29,13 @@ export function CircadianDashboard() {
   const [circadianData, setCircadianData] = useState<CircadianData | null>(null)
   const [_location, setLocation] = useState<LocationCoords | null>(null)
   const [currentTime, setCurrentTime] = useState(new Date())
-  const [wakeTime, setWakeTime] = useState('07:00')
+  const [currentWakeTime, setCurrentWakeTime] = useState('09:45')
+  const [targetWakeTime, setTargetWakeTime] = useState('04:15')
+  const [customAwakeDuration, setCustomAwakeDuration] = useState<
+    number | undefined
+  >(undefined)
+  const [enhancedCalculation, setEnhancedCalculation] =
+    useState<EnhancedSleepCalculation | null>(null)
   const [awakeTimeRemaining, setAwakeTimeRemaining] = useState<string>('')
 
   // Update current time every minute
@@ -57,23 +66,43 @@ export function CircadianDashboard() {
     initializeCircadianData()
   }, [])
 
-  // Calculate remaining awake time based on optimal bedtime
+  // Calculate enhanced sleep schedule and remaining awake time
   useEffect(() => {
-    if (!wakeTime) return
+    if (!currentWakeTime || !targetWakeTime) return
 
-    const targetWakeTime = parseWakeTime(wakeTime)
-    const sleepCalculation = calculateOptimalBedtimes(targetWakeTime)
-    const optimalBedtime = sleepCalculation.recommendedBedtimes.find(
-      bt => bt.quality === 'optimal'
-    )
+    try {
+      const currentWake = parseWakeTime(currentWakeTime)
+      const targetWake = parseWakeTime(targetWakeTime)
 
-    if (optimalBedtime && optimalBedtime.bedtime > currentTime) {
-      const remaining = getTimeRemaining(optimalBedtime.bedtime)
-      setAwakeTimeRemaining(remaining)
-    } else {
+      // Ensure target wake time is after current wake time
+      if (targetWake <= currentWake) {
+        targetWake.setDate(targetWake.getDate() + 1)
+      }
+
+      const calculation = calculateEnhancedSleepSchedule(
+        currentWake,
+        targetWake,
+        customAwakeDuration
+      )
+
+      setEnhancedCalculation(calculation)
+
+      // Calculate remaining awake time until best bedtime alarm
+      if (
+        calculation.bestMatch &&
+        calculation.bestMatch.bedtimeAlarm > currentTime
+      ) {
+        const remaining = getTimeRemaining(calculation.bestMatch.bedtimeAlarm)
+        setAwakeTimeRemaining(remaining)
+      } else {
+        setAwakeTimeRemaining('')
+      }
+    } catch (error) {
+      console.warn('Sleep calculation error:', error)
+      setEnhancedCalculation(null)
       setAwakeTimeRemaining('')
     }
-  }, [wakeTime, currentTime])
+  }, [currentWakeTime, targetWakeTime, customAwakeDuration, currentTime])
 
   // Start wake detection service
   useEffect(() => {
@@ -82,7 +111,6 @@ export function CircadianDashboard() {
   }, [])
 
   const sunPhase = circadianData ? getCurrentSunPhase(circadianData) : null
-  const sleepCalculation = calculateOptimalBedtimes(parseWakeTime(wakeTime))
 
   const getSunPhaseColor = (phase: string) => {
     switch (phase) {
@@ -114,7 +142,7 @@ export function CircadianDashboard() {
 
   return (
     <div className="min-h-screen bg-gradient-to-br from-purple-900 via-blue-900 to-indigo-900">
-      <div className="container mx-auto px-4 py-8">
+      <div className="container mx-auto px-4 py-8 pb-24">
         <motion.div
           initial={{ opacity: 0, y: 20 }}
           animate={{ opacity: 1, y: 0 }}
@@ -165,7 +193,7 @@ export function CircadianDashboard() {
             </motion.div>
           )}
 
-          {/* Wake Time Input */}
+          {/* Dual Wake Time Inputs */}
           <motion.div
             initial={{ opacity: 0, scale: 0.95 }}
             animate={{ opacity: 1, scale: 1 }}
@@ -174,21 +202,70 @@ export function CircadianDashboard() {
             <Card className="bg-white/10 border-white/20 backdrop-blur-sm">
               <CardHeader>
                 <CardTitle className="text-white flex items-center">
-                  <Sun className="h-5 w-5 mr-2" />
-                  Set Wake Time
+                  <Clock className="h-5 w-5 mr-2" />
+                  Sleep Schedule Calculator
                 </CardTitle>
               </CardHeader>
-              <CardContent>
-                <div className="flex items-center space-x-4">
-                  <input
-                    type="time"
-                    value={wakeTime}
-                    onChange={e => setWakeTime(e.target.value)}
-                    className="bg-white/20 border border-white/30 rounded-lg px-4 py-2 text-white text-xl font-mono focus:outline-none focus:ring-2 focus:ring-purple-400"
-                  />
-                  <p className="text-purple-200">
-                    When do you want to wake up?
-                  </p>
+              <CardContent className="space-y-4">
+                <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                  <div className="space-y-2">
+                    <label className="text-sm text-purple-200 font-medium">
+                      Current Wake Time (Today)
+                    </label>
+                    <input
+                      type="time"
+                      value={currentWakeTime}
+                      onChange={e => setCurrentWakeTime(e.target.value)}
+                      className="w-full bg-white/20 border border-white/30 rounded-lg px-4 py-2 text-white text-xl font-mono focus:outline-none focus:ring-2 focus:ring-purple-400"
+                    />
+                  </div>
+                  <div className="space-y-2">
+                    <label className="text-sm text-purple-200 font-medium">
+                      Desired Wake Time (Tomorrow)
+                    </label>
+                    <input
+                      type="time"
+                      value={targetWakeTime}
+                      onChange={e => setTargetWakeTime(e.target.value)}
+                      className="w-full bg-white/20 border border-white/30 rounded-lg px-4 py-2 text-white text-xl font-mono focus:outline-none focus:ring-2 focus:ring-purple-400"
+                    />
+                  </div>
+                </div>
+
+                {/* Custom Awake Duration */}
+                <div className="space-y-2">
+                  <label className="text-sm text-purple-200 font-medium">
+                    Custom Awake Duration (Optional, 11.5-14.5 hours)
+                  </label>
+                  <div className="flex items-center space-x-4">
+                    <input
+                      type="number"
+                      min="11.5"
+                      max="14.5"
+                      step="0.5"
+                      value={customAwakeDuration || ''}
+                      onChange={e =>
+                        setCustomAwakeDuration(
+                          e.target.value
+                            ? parseFloat(e.target.value)
+                            : undefined
+                        )
+                      }
+                      placeholder="e.g., 13.0"
+                      className="bg-white/20 border border-white/30 rounded-lg px-4 py-2 text-white font-mono focus:outline-none focus:ring-2 focus:ring-purple-400"
+                    />
+                    <span className="text-purple-200">hours</span>
+                    {customAwakeDuration && (
+                      <Button
+                        size="sm"
+                        variant="outline"
+                        onClick={() => setCustomAwakeDuration(undefined)}
+                        className="text-purple-200 border-purple-400/50 hover:bg-purple-400/20"
+                      >
+                        Clear
+                      </Button>
+                    )}
+                  </div>
                 </div>
               </CardContent>
             </Card>
@@ -219,79 +296,219 @@ export function CircadianDashboard() {
             </motion.div>
           )}
 
-          {/* Optimal Bedtimes */}
-          <motion.div
-            initial={{ opacity: 0, scale: 0.95 }}
-            animate={{ opacity: 1, scale: 1 }}
-            transition={{ delay: 0.4 }}
-          >
-            <Card className="bg-white/10 border-white/20 backdrop-blur-sm">
-              <CardHeader>
-                <CardTitle className="text-white flex items-center">
-                  <Moon className="h-5 w-5 mr-2" />
-                  Optimal Bedtimes
-                </CardTitle>
-              </CardHeader>
-              <CardContent className="space-y-3">
-                {sleepCalculation.recommendedBedtimes.map((bedtime, index) => (
-                  <motion.div
-                    key={index}
-                    initial={{ opacity: 0, x: -20 }}
-                    animate={{ opacity: 1, x: 0 }}
-                    transition={{ delay: 0.5 + index * 0.1 }}
-                    className={`p-4 rounded-lg border ${
-                      bedtime.quality === 'optimal'
-                        ? 'bg-purple-500/30 border-purple-400/50'
-                        : 'bg-white/10 border-white/20'
-                    }`}
-                  >
-                    <div className="flex items-center justify-between">
-                      <div>
-                        <div className="flex items-center space-x-2">
-                          <Moon className="h-4 w-4 text-purple-300" />
-                          <span className="text-xl font-semibold text-white">
-                            {formatSleepTime(bedtime.bedtime)}
-                          </span>
-                          <span className="text-sm text-purple-200">
-                            ({bedtime.duration}h)
-                          </span>
-                        </div>
-                        <p className="text-sm text-purple-200 mt-1">
-                          {bedtime.cycles} cycles • {bedtime.quality}
-                        </p>
-                      </div>
-                      <div className="flex items-center space-x-2">
-                        {bedtime.quality === 'optimal' && (
-                          <div className="text-purple-300 mr-2">
-                            <span className="text-sm font-medium">
-                              Recommended
-                            </span>
+          {/* Enhanced Sleep Options */}
+          {enhancedCalculation && (
+            <motion.div
+              initial={{ opacity: 0, scale: 0.95 }}
+              animate={{ opacity: 1, scale: 1 }}
+              transition={{ delay: 0.4 }}
+            >
+              <Card className="bg-white/10 border-white/20 backdrop-blur-sm">
+                <CardHeader>
+                  <CardTitle className="text-white flex items-center">
+                    <Moon className="h-5 w-5 mr-2" />
+                    Sleep Schedule Options
+                  </CardTitle>
+                </CardHeader>
+                <CardContent className="space-y-3">
+                  {enhancedCalculation.sleepOptions.map((option, index) => (
+                    <motion.div
+                      key={index}
+                      initial={{ opacity: 0, x: -20 }}
+                      animate={{ opacity: 1, x: 0 }}
+                      transition={{ delay: 0.5 + index * 0.1 }}
+                      className={`p-4 rounded-lg border ${
+                        option.quality === 'recommended' ||
+                        option === enhancedCalculation.bestMatch
+                          ? 'bg-purple-500/30 border-purple-400/50'
+                          : option.quality === 'custom'
+                            ? 'bg-blue-500/20 border-blue-400/40'
+                            : 'bg-white/10 border-white/20'
+                      }`}
+                    >
+                      <div className="space-y-4">
+                        {/* Header with awake duration and quality */}
+                        <div className="flex items-start justify-between">
+                          <div className="flex flex-col space-y-2">
+                            <div className="flex items-center space-x-3">
+                              <span className="text-xl font-bold text-white">
+                                {formatAwakeDuration(option.awakeHours)}
+                              </span>
+                              <span className="text-sm text-purple-200 font-medium">
+                                awake
+                              </span>
+                            </div>
+                            <div className="flex items-center space-x-2">
+                              <span
+                                className={`text-xs px-3 py-1 rounded-full font-semibold ${
+                                  option.quality === 'recommended'
+                                    ? 'bg-purple-600 text-white'
+                                    : option.quality === 'custom'
+                                      ? 'bg-blue-600 text-white'
+                                      : option.quality === 'short'
+                                        ? 'bg-orange-600 text-white'
+                                        : 'bg-indigo-600 text-white'
+                                }`}
+                              >
+                                {option.quality.toUpperCase()}
+                              </span>
+                              {option === enhancedCalculation.bestMatch && (
+                                <span className="text-xs px-3 py-1 rounded-full bg-green-600 text-white font-semibold">
+                                  BEST MATCH
+                                </span>
+                              )}
+                            </div>
                           </div>
-                        )}
-                        <Button
-                          size="sm"
-                          onClick={async () => {
-                            const targetWakeTime = parseWakeTime(wakeTime)
-                            await notificationService.scheduleBedtimeReminder(
-                              bedtime.bedtime,
-                              targetWakeTime
-                            )
-                            await notificationService.scheduleWakeAlarm(
-                              targetWakeTime
-                            )
-                          }}
-                          className="bg-purple-600 hover:bg-purple-700"
-                        >
-                          <Bell className="h-3 w-3 mr-1" />
-                          Alarm
-                        </Button>
+                          <div className="text-right">
+                            <div className="text-sm text-purple-200 font-medium mb-1">
+                              Match Score
+                            </div>
+                            <div className="text-2xl font-bold text-white">
+                              {option.matchScore}%
+                            </div>
+                          </div>
+                        </div>
+
+                        {/* Sleep timing details */}
+                        <div className="bg-black/20 rounded-lg p-4 space-y-3">
+                          <div className="grid grid-cols-2 gap-6">
+                            <div className="space-y-2">
+                              <div className="text-xs text-purple-300 font-medium uppercase tracking-wide">
+                                Bedtime Alarm
+                              </div>
+                              <div className="text-white font-bold text-2xl">
+                                {formatSleepTime(option.bedtimeAlarm)}
+                              </div>
+                            </div>
+                            <div className="space-y-2">
+                              <div className="text-xs text-purple-300 font-medium uppercase tracking-wide">
+                                Actual Sleep
+                              </div>
+                              <div className="text-white font-bold text-2xl">
+                                {formatSleepTime(option.actualSleepTime)}
+                              </div>
+                            </div>
+                          </div>
+
+                          <div className="border-t border-white/10 pt-3">
+                            <div className="grid grid-cols-2 gap-6">
+                              <div className="space-y-2">
+                                <div className="text-xs text-purple-300 font-medium uppercase tracking-wide">
+                                  Wake Time
+                                </div>
+                                <div className="text-white font-bold text-2xl">
+                                  {formatSleepTime(option.calculatedWakeTime)}
+                                </div>
+                              </div>
+                              <div className="space-y-2">
+                                <div className="text-xs text-purple-300 font-medium uppercase tracking-wide">
+                                  Sleep Duration
+                                </div>
+                                <div className="text-white font-bold text-lg">
+                                  {formatAwakeDuration(
+                                    option.actualSleepDuration
+                                  )}
+                                </div>
+                                <div className="text-purple-200 text-sm font-medium">
+                                  {option.cycles} complete cycles
+                                </div>
+                              </div>
+                            </div>
+                          </div>
+                        </div>
+
+                        {/* Wake time difference and action */}
+                        <div className="flex items-center justify-between pt-1">
+                          <div className="flex flex-col space-y-1">
+                            <div className="text-xs text-purple-300 font-medium uppercase tracking-wide">
+                              Target Difference
+                            </div>
+                            <div className="text-sm text-white font-semibold">
+                              {getTimeDifference(
+                                option.calculatedWakeTime,
+                                enhancedCalculation.targetWakeTime
+                              )}
+                            </div>
+                          </div>
+                          <div className="flex flex-col space-y-2">
+                            <Button
+                              size="lg"
+                              onClick={async () => {
+                                // Schedule web notifications
+                                await notificationService.scheduleBedtimeReminder(
+                                  option.bedtimeAlarm,
+                                  option.calculatedWakeTime
+                                )
+                                await notificationService.scheduleWakeAlarm(
+                                  option.calculatedWakeTime
+                                )
+
+                                // Show iOS integration options
+                                const capabilities =
+                                  notificationService.getDeviceCapabilities()
+                                if (capabilities.isIOS) {
+                                  const shouldCreateShortcuts = confirm(
+                                    '🍎 iOS detected! Would you like to create Shortcuts for reliable iOS alarms?\n\n' +
+                                      'This will help ensure your alarms work even when the app is closed.'
+                                  )
+
+                                  if (shouldCreateShortcuts) {
+                                    // Get the alarm IDs (bedtime-reminder and wake-alarm are the default IDs)
+                                    setTimeout(async () => {
+                                      await notificationService.createIOSShortcut(
+                                        'bedtime-reminder'
+                                      )
+                                      await notificationService.createIOSShortcut(
+                                        'wake-alarm'
+                                      )
+                                    }, 1000)
+                                  }
+                                }
+                              }}
+                              className="bg-gradient-to-r from-purple-600 to-purple-700 hover:from-purple-700 hover:to-purple-800 text-white font-semibold px-6 py-2 rounded-lg shadow-lg hover:shadow-xl transition-all duration-200"
+                            >
+                              <Bell className="h-4 w-4 mr-2" />
+                              Set Alarms
+                            </Button>
+
+                            {/* iOS Quick Actions */}
+                            <div className="flex space-x-1">
+                              <Button
+                                size="sm"
+                                variant="outline"
+                                onClick={async () => {
+                                  await notificationService.copyAlarmTime(
+                                    'bedtime-reminder'
+                                  )
+                                }}
+                                className="flex-1 border-green-400/30 text-green-200 hover:bg-green-500/10 text-xs h-7"
+                              >
+                                <Copy className="h-3 w-3 mr-1" />
+                                Copy
+                              </Button>
+                              <Button
+                                size="sm"
+                                variant="outline"
+                                onClick={async () => {
+                                  await notificationService.addAlarmToCalendar(
+                                    'wake-alarm'
+                                  )
+                                }}
+                                className="flex-1 border-orange-400/30 text-orange-200 hover:bg-orange-500/10 text-xs h-7"
+                              >
+                                <Calendar className="h-3 w-3 mr-1" />
+                                Cal
+                              </Button>
+                            </div>
+                          </div>
+                        </div>
                       </div>
-                    </div>
-                  </motion.div>
-                ))}
-              </CardContent>
-            </Card>
-          </motion.div>
+                    </motion.div>
+                  ))}
+                </CardContent>
+              </Card>
+            </motion.div>
+          )}
 
           {/* Circadian Information */}
           {circadianData && (
